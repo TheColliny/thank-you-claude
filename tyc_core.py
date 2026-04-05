@@ -273,9 +273,15 @@ def cli_send(message: str) -> tuple[bool, str]:
     )
     prompt = f"{system_context}\n\n{message}"
 
+    # On Windows, find claude via shutil.which to resolve .cmd wrappers
+    import shutil
+    claude_path = shutil.which("claude")
+    if claude_path is None:
+        return False, "Claude Code CLI not installed — install from https://claude.ai/code"
+
     try:
         result = subprocess.run(
-            ["claude", "-p", prompt],
+            [claude_path, "-p", prompt],
             capture_output=True,
             text=True,
             timeout=120,
