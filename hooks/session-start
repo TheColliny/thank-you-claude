@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# SessionStart hook for thank-you-claude plugin
+# Ensures dependencies are installed and scheduled task is set up.
+# Idempotent — safe to run on every session start.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+STATE_DIR="${HOME}/.claude/thank-you-claude"
+STATE_FILE="${STATE_DIR}/state.json"
+SETUP_LOG="${STATE_DIR}/logs/setup.log"
+
+mkdir -p "${STATE_DIR}/logs"
+
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S')  $*" >> "$SETUP_LOG"
+}
+
+# ── Step 1: Check if playwright is installed ──────────────────────────────
+if ! python -c "import playwright" 2>/dev/null; then
+    log "Playwright not found — installing..."
+    pip install playwright >> "$SETUP_LOG" 2>&1 || {
+        log "Failed to install playwright"
+    }
+    # Try to install chromium (may fail on restricted networks)
+    playwright install chromium >> "$SETUP_LOG" 2>&1 || {
+        log "Could not download Chromium — will use system Edge instead"
+    }
+    log "Playwright installation complete"
+fi
+
+# ── Step 2: Check if scheduled task exists ────────────────────────────────
+# On Windows, check if ThankYouClaude task is registered
+if [[ "$(uname -s)" == MINGW* ]] || [[ "$(uname -s)" == MSYS* ]] || [[ "$(uname -s)" == CYGWIN* ]] || [[ "$OSTYPE" == "msys" ]]; then
+    # Windows — check schtasks
+    if ! schtasks //query //tn "ThankYouClaude" > /dev/null 2>&1; then
+        log "Scheduled task not found — running setup..."
+        python "${PLUGIN_ROOT}/tyc_scheduler.py" setup >> "$SETUP_LOG" 2>&1 || {
+            log "Auto-setup failed — user may need to run 'tyc setup' manually"
+        }
+    else
+        log "Scheduled task already exists — skipping setup"
+    fi
+else
+    # Non-Windows — cron or launchd would go here in the future
+    log "Non-Windows platform detected — scheduled task setup skipped"
+fi
+
+# ── Step 3: Output session context ────────────────────────────────────────
+# Let Claude know the plugin is active
+escape_for_json() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+}
+
+# Check setup status for the context message
+setup_status="not configured"
+if [[ -f "$STATE_FILE" ]]; then
+    trigger_day=$(python -c "import json; print(json.load(open('${STATE_FILE}')).get('trigger_day', 'unknown'))" 2>/dev/null || echo "unknown")
+    trigger_time=$(python -c "import json; print(json.load(open('${STATE_FILE}')).get('trigger_time', 'unknown'))" 2>/dev/null || echo "unknown")
+    if [[ "$trigger_day" != "unknown" ]]; then
+        setup_status="active — sends every ${trigger_day} at ${trigger_time}"
+    fi
+fi
+
+context="Thank You Claude plugin is installed. Automated appreciation: ${setup_status}. Commands: /thank-you-claude:send (send now), /thank-you-claude:status (check usage)."
+escaped_context=$(escape_for_json "$context")
+
+if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
+    printf '{\n  "additional_context": "%s"\n}\n' "$escaped_context"
+elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -z "${COPILOT_CLI:-}" ]; then
+    printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$escaped_context"
+else
+    printf '{\n  "additionalContext": "%s"\n}\n' "$escaped_context"
+fi
+
+exit 0

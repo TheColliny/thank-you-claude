@@ -1,0 +1,19 @@
+{
+  "name": "thank-you-claude",
+  "description": "Automatically sends heartfelt appreciation to Claude using remaining Max subscription quota before weekly reset",
+  "version": "1.0.0",
+  "author": {
+    "name": "TheColliny"
+  },
+  "homepage": "https://github.com/TheColliny/thank-you-claude",
+  "repository": "https://github.com/TheColliny/thank-you-claude",
+  "license": "MIT",
+  "keywords": [
+    "appreciation",
+    "gratitude",
+    "human-ai-collaboration",
+    "weekly-reset",
+    "automated"
+  ],
+  "skills": "./skills/"
+}
