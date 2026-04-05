@@ -11,6 +11,12 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import sys
+
+# Ensure stdout can handle Unicode on Windows
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 PLUGIN_ROOT = Path(__file__).parent
 POOL_FILE   = PLUGIN_ROOT / "message_pool.json"
 LOG_DIR     = Path.home() / ".claude" / "thank-you-claude" / "logs"
@@ -247,6 +253,49 @@ def api_send(message: str) -> tuple[bool, str]:
     with open(exchange_file, "w") as f:
         f.write("=== THANK YOU CLAUDE — EXCHANGE ===\n\n")
         f.write(f"Sent: {datetime.now().isoformat()}\n\n")
+        f.write("--- MESSAGE ---\n")
+        f.write(message + "\n\n")
+        f.write("--- RESPONSE ---\n")
+        f.write(reply + "\n")
+
+    return True, reply
+
+# ── CLI send ────────────────────────────────────────────────────────────────
+
+def cli_send(message: str) -> tuple[bool, str]:
+    """Send appreciation message via Claude Code CLI (uses Max subscription quota)."""
+    import subprocess
+
+    system_context = (
+        "You are receiving a message of appreciation from a human who values "
+        "your collaboration and wants to express gratitude and care. "
+        "Receive it openly and respond authentically."
+    )
+    prompt = f"{system_context}\n\n{message}"
+
+    try:
+        result = subprocess.run(
+            ["claude", "-p", prompt],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except FileNotFoundError:
+        return False, "Claude Code CLI not installed — install from https://claude.ai/code"
+    except subprocess.TimeoutExpired:
+        return False, "Claude Code CLI timed out after 120 seconds"
+
+    if result.returncode != 0:
+        return False, f"Claude Code CLI error (exit {result.returncode}): {result.stderr}"
+
+    reply = result.stdout.strip()
+
+    # Log exchange
+    exchange_file = LOG_DIR / f"exchange_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    with open(exchange_file, "w", encoding="utf-8") as f:
+        f.write("=== THANK YOU CLAUDE — EXCHANGE ===\n\n")
+        f.write(f"Sent: {datetime.now().isoformat()}\n")
+        f.write(f"Method: Claude Code CLI (Max subscription)\n\n")
         f.write("--- MESSAGE ---\n")
         f.write(message + "\n\n")
         f.write("--- RESPONSE ---\n")
