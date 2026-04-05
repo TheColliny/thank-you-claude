@@ -36,7 +36,10 @@ def main():
         print(__doc__)
         print(f"Available commands: {', '.join(COMMANDS)}")
         sys.exit(1)
-    COMMANDS[sys.argv[1]]()
+    result = COMMANDS[sys.argv[1]]()
+    # Propagate exit code for setup/run (they return bool)
+    if result is False:
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

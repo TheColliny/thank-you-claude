@@ -3,3 +3,5 @@ __pycache__/
 .env
 *.egg-info/
 dist/
+state.json
+.pytest_cache/

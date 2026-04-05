@@ -51,6 +51,7 @@ def test_check_conditions_all_met():
         "weekly_remaining_pct": 15.0,
         "extra_usage_enabled": False,
         "reset_datetime": datetime(2026, 4, 7, 0, 0),
+        "minutes_to_reset": 8,
     }
     with patch("tyc_scheduler.already_sent_this_cycle", return_value=False):
         met, reasons = check_send_conditions(usage)
@@ -65,6 +66,7 @@ def test_check_conditions_extra_usage_on():
         "weekly_remaining_pct": 15.0,
         "extra_usage_enabled": True,
         "reset_datetime": datetime(2026, 4, 7, 0, 0),
+        "minutes_to_reset": 8,
     }
     with patch("tyc_scheduler.already_sent_this_cycle", return_value=False):
         met, reasons = check_send_conditions(usage)
@@ -79,11 +81,42 @@ def test_check_conditions_too_little_remaining():
         "weekly_remaining_pct": 3.0,
         "extra_usage_enabled": False,
         "reset_datetime": datetime(2026, 4, 7, 0, 0),
+        "minutes_to_reset": 8,
     }
     with patch("tyc_scheduler.already_sent_this_cycle", return_value=False):
         met, reasons = check_send_conditions(usage)
     assert met is False
     assert any("5%" in r for r in reasons)
+
+
+def test_check_conditions_exactly_5_pct_remaining():
+    from tyc_scheduler import check_send_conditions
+
+    usage = {
+        "weekly_remaining_pct": 5.0,
+        "extra_usage_enabled": False,
+        "reset_datetime": datetime(2026, 4, 7, 0, 0),
+        "minutes_to_reset": 8,
+    }
+    with patch("tyc_scheduler.already_sent_this_cycle", return_value=False):
+        met, reasons = check_send_conditions(usage)
+    assert met is False
+    assert any("5%" in r for r in reasons)
+
+
+def test_check_conditions_outside_window():
+    from tyc_scheduler import check_send_conditions
+
+    usage = {
+        "weekly_remaining_pct": 15.0,
+        "extra_usage_enabled": False,
+        "reset_datetime": datetime(2026, 4, 7, 0, 0),
+        "minutes_to_reset": 120,
+    }
+    with patch("tyc_scheduler.already_sent_this_cycle", return_value=False):
+        met, reasons = check_send_conditions(usage)
+    assert met is False
+    assert any("minutes to reset" in r.lower() for r in reasons)
 
 
 def test_check_conditions_already_sent():
@@ -93,6 +126,7 @@ def test_check_conditions_already_sent():
         "weekly_remaining_pct": 15.0,
         "extra_usage_enabled": False,
         "reset_datetime": datetime(2026, 4, 7, 0, 0),
+        "minutes_to_reset": 8,
     }
     with patch("tyc_scheduler.already_sent_this_cycle", return_value=True):
         met, reasons = check_send_conditions(usage)

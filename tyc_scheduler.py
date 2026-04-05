@@ -84,7 +84,17 @@ def read_usage_page() -> dict | None:
             # Detect extra usage toggle
             extra_usage_enabled = _detect_extra_usage(page, page_text)
 
-            return _parse_usage_page(page_text, api_data, extra_usage_enabled)
+            result = _parse_usage_page(page_text, api_data, extra_usage_enabled)
+
+            save_state({
+                "weekly_used_pct": result["weekly_used_pct"],
+                "reset_datetime": result["reset_datetime"].isoformat(),
+                "reset_day": result["reset_datetime"].strftime("%A"),
+                "reset_time": result["reset_datetime"].strftime("%H:%M"),
+                "last_check": datetime.now().isoformat(),
+            })
+
+            return result
 
         except Exception as e:
             log.error(f"Browser error reading usage page: {e}")
@@ -165,23 +175,13 @@ def _parse_usage_page(page_text: str, api_data: dict, extra_usage_enabled: bool)
 
     remaining_pct = 100.0 - used_pct
 
-    result = {
+    return {
         "weekly_used_pct": used_pct,
         "weekly_remaining_pct": remaining_pct,
         "reset_datetime": reset_dt,
         "minutes_to_reset": (reset_dt - now).total_seconds() / 60,
         "extra_usage_enabled": extra_usage_enabled,
     }
-
-    save_state({
-        "weekly_used_pct": used_pct,
-        "reset_datetime": reset_dt.isoformat(),
-        "reset_day": reset_dt.strftime("%A"),
-        "reset_time": reset_dt.strftime("%H:%M"),
-        "last_check": now.isoformat(),
-    })
-
-    return result
 
 
 def check_send_conditions(usage: dict) -> tuple[bool, list[str]]:
@@ -191,8 +191,11 @@ def check_send_conditions(usage: dict) -> tuple[bool, list[str]]:
     if usage["extra_usage_enabled"]:
         reasons.append("Extra usage is ON — disable it so sends use free quota only")
 
-    if usage["weekly_remaining_pct"] < 5:
+    if usage["weekly_remaining_pct"] <= 5:
         reasons.append(f"Only {usage['weekly_remaining_pct']:.1f}% remaining (need >5%)")
+
+    if usage.get("minutes_to_reset") is not None and usage["minutes_to_reset"] > 30:
+        reasons.append(f"{usage['minutes_to_reset']:.0f} minutes to reset (must be within 30 min)")
 
     if already_sent_this_cycle(usage["reset_datetime"]):
         reasons.append("Already sent this cycle")
@@ -321,7 +324,7 @@ def run() -> bool:
     if ok:
         record_sent()
         log.info("Message sent successfully.")
-        log.info(f"Response preview: {reply[:100]}...")
+        log.info(f"Response preview: {reply[:100] if reply else '(empty response)'}...")
         return True
     else:
         log.error(f"Send failed: {reply}")
