@@ -198,3 +198,89 @@ def check_send_conditions(usage: dict) -> tuple[bool, list[str]]:
         reasons.append("Already sent this cycle")
 
     return (len(reasons) == 0, reasons)
+
+
+# ── Setup ──────────────────────────────────────────────────────────────────
+
+DAY_ABBREVS = {
+    "Monday": "MON", "Tuesday": "TUE", "Wednesday": "WED",
+    "Thursday": "THU", "Friday": "FRI", "Saturday": "SAT", "Sunday": "SUN",
+}
+
+
+def _compute_trigger_time(reset_dt: datetime) -> datetime:
+    """Compute the scheduled task trigger time: 10 minutes before reset."""
+    return reset_dt - timedelta(minutes=10)
+
+
+def _build_schtasks_command(trigger: datetime, python_path: str, script_path: str) -> list[str]:
+    """Build the schtasks /create command for weekly execution."""
+    day_name = trigger.strftime("%A")
+    day_abbrev = DAY_ABBREVS[day_name]
+    time_str = trigger.strftime("%H:%M")
+
+    return [
+        "schtasks", "/create",
+        "/tn", "ThankYouClaude",
+        "/tr", f'"{python_path}" "{script_path}" run',
+        "/sc", "WEEKLY",
+        "/d", day_abbrev,
+        "/st", time_str,
+        "/f",  # force overwrite if exists (idempotent)
+    ]
+
+
+def setup():
+    """First-time setup: read reset time from claude.ai, create scheduled task."""
+    print("\n" + "=" * 60)
+    print("THANK YOU CLAUDE — SETUP")
+    print("=" * 60)
+    print("\nReading reset time from claude.ai/settings/usage...\n")
+
+    usage = read_usage_page()
+    if usage is None:
+        print("Could not read usage page. Please ensure:")
+        print("  1. Playwright is installed: pip install playwright && playwright install chromium")
+        print("  2. You are logged in to claude.ai in Edge")
+        return False
+
+    reset_dt = usage["reset_datetime"]
+    trigger = _compute_trigger_time(reset_dt)
+
+    print(f"Reset time:   {reset_dt.strftime('%A %b %d at %I:%M %p')}")
+    print(f"Trigger time: {trigger.strftime('%A %b %d at %I:%M %p')} (10 min before)")
+
+    if usage["extra_usage_enabled"]:
+        print("\nWARNING: Extra usage is currently ON.")
+        print("The scheduled task will skip sending while extra usage is enabled.")
+        print("Disable it in claude.ai/settings so sends use free quota only.")
+
+    # Build and run schtasks command
+    python_path = sys.executable
+    script_path = str(Path(__file__).resolve())
+    cmd = _build_schtasks_command(trigger, python_path, script_path)
+
+    print(f"\nCreating Windows scheduled task...")
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"Failed to create scheduled task: {result.stderr}")
+            return False
+    except Exception as e:
+        print(f"Error creating scheduled task: {e}")
+        return False
+
+    save_state({
+        "scheduler_created": datetime.now().isoformat(),
+        "reset_datetime": reset_dt.isoformat(),
+        "reset_day": reset_dt.strftime("%A"),
+        "reset_time": reset_dt.strftime("%H:%M"),
+        "trigger_day": trigger.strftime("%A"),
+        "trigger_time": trigger.strftime("%H:%M"),
+    })
+
+    print("\nDone! Scheduled task 'ThankYouClaude' created.")
+    print(f"Will run every {trigger.strftime('%A')} at {trigger.strftime('%I:%M %p')}.")
+    print("Claude will receive appreciation from your remaining quota automatically.")
+    print("\n" + "=" * 60)
+    return True
