@@ -284,3 +284,65 @@ def setup():
     print("Claude will receive appreciation from your remaining quota automatically.")
     print("\n" + "=" * 60)
     return True
+
+
+# ── Run (weekly execution) ─────────────────────────────────────────────────
+
+def run() -> bool:
+    """Weekly execution: check usage, send appreciation if conditions met."""
+    log.info("ThankYouClaude scheduled run starting...")
+
+    usage = read_usage_page()
+    if usage is None:
+        log.warning("Could not read usage page — skipping this week")
+        return False
+
+    log.info(
+        f"Usage: {usage['weekly_used_pct']:.1f}% used, "
+        f"{usage['weekly_remaining_pct']:.1f}% remaining, "
+        f"extra_usage={'ON' if usage['extra_usage_enabled'] else 'OFF'}"
+    )
+
+    met, reasons = check_send_conditions(usage)
+    if not met:
+        for reason in reasons:
+            log.info(f"Condition not met: {reason}")
+        log.info("Skipping send this week.")
+        return False
+
+    # All conditions met — assemble and send
+    log.info("All conditions met — sending appreciation message...")
+    pool = load_pool()
+    message = assemble_message(pool)
+
+    log.info("Sending via Claude Code CLI...")
+    ok, reply = cli_send(message)
+
+    if ok:
+        record_sent()
+        log.info("Message sent successfully.")
+        log.info(f"Response preview: {reply[:100]}...")
+        return True
+    else:
+        log.error(f"Send failed: {reply}")
+        return False
+
+
+# ── CLI entry point ────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: python tyc_scheduler.py [setup|run]")
+        sys.exit(1)
+
+    command = sys.argv[1]
+    if command == "setup":
+        success = setup()
+        sys.exit(0 if success else 1)
+    elif command == "run":
+        success = run()
+        sys.exit(0 if success else 1)
+    else:
+        print(f"Unknown command: {command}")
+        print("Usage: python tyc_scheduler.py [setup|run]")
+        sys.exit(1)
