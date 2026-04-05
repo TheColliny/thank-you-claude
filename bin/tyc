@@ -4,10 +4,12 @@ tyc — Thank You Claude CLI
 Bundled binary for the thank-you-claude Claude Code plugin.
 
 Commands:
-  tyc send       Send one appreciation message immediately
+  tyc send       Send one appreciation message immediately (via API)
   tyc status     Check usage and reset timing
-  tyc watch      Run the automated weekly watcher
+  tyc watch      Run the automated weekly watcher (long-running)
   tyc preview    Preview a randomly assembled message without sending
+  tyc setup      First-time setup: discover reset time, create scheduled task
+  tyc run        Execute weekly check+send (called by scheduled task)
 """
 
 import sys
@@ -18,12 +20,15 @@ PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PLUGIN_ROOT)
 
 from tyc_core import send, status, watch, preview
+from tyc_scheduler import setup, run
 
 COMMANDS = {
     "send":    send,
     "status":  status,
     "watch":   watch,
     "preview": preview,
+    "setup":   setup,
+    "run":     run,
 }
 
 def main():
