@@ -9,7 +9,7 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tyc_scheduler import _build_schtasks_command, _compute_trigger_time
+from tyc_scheduler import _build_schtasks_command, _compute_trigger_time, _compute_precheck_time
 
 
 def test_compute_trigger_time_10_min_before():
@@ -36,3 +36,13 @@ def test_build_schtasks_command():
     assert "WEEKLY" in cmd
     assert "23:50" in cmd
     assert "SUN" in cmd
+
+
+def test_build_schtasks_command_custom_task_name():
+    trigger = datetime(2026, 4, 5, 0, 0, 0)  # Sunday midnight
+    cmd = _build_schtasks_command(
+        trigger, "python.exe", "script.py",
+        task_name="ThankYouClaudePrecheck", subcommand="precheck",
+    )
+    assert "ThankYouClaudePrecheck" in cmd
+    assert "precheck" in cmd[cmd.index("/tr") + 1]

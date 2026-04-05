@@ -216,7 +216,9 @@ def _compute_trigger_time(reset_dt: datetime) -> datetime:
     return reset_dt - timedelta(minutes=10)
 
 
-def _build_schtasks_command(trigger: datetime, python_path: str, script_path: str) -> list[str]:
+def _build_schtasks_command(trigger: datetime, python_path: str, script_path: str,
+                            task_name: str = "ThankYouClaude",
+                            subcommand: str = "run") -> list[str]:
     """Build the schtasks /create command for weekly execution."""
     day_name = trigger.strftime("%A")
     day_abbrev = DAY_ABBREVS[day_name]
@@ -224,13 +226,18 @@ def _build_schtasks_command(trigger: datetime, python_path: str, script_path: st
 
     return [
         "schtasks", "/create",
-        "/tn", "ThankYouClaude",
-        "/tr", f'"{python_path}" "{script_path}" run',
+        "/tn", task_name,
+        "/tr", f'"{python_path}" "{script_path}" {subcommand}',
         "/sc", "WEEKLY",
         "/d", day_abbrev,
         "/st", time_str,
         "/f",  # force overwrite if exists (idempotent)
     ]
+
+
+def _compute_precheck_time(reset_dt: datetime) -> datetime:
+    """Compute precheck time: 24 hours before reset, to catch schedule drift."""
+    return reset_dt - timedelta(hours=24)
 
 
 def setup():
@@ -249,29 +256,38 @@ def setup():
 
     reset_dt = usage["reset_datetime"]
     trigger = _compute_trigger_time(reset_dt)
+    precheck = _compute_precheck_time(reset_dt)
 
-    print(f"Reset time:   {reset_dt.strftime('%A %b %d at %I:%M %p')}")
-    print(f"Trigger time: {trigger.strftime('%A %b %d at %I:%M %p')} (10 min before)")
+    print(f"Reset time:    {reset_dt.strftime('%A %b %d at %I:%M %p')}")
+    print(f"Precheck time: {precheck.strftime('%A %b %d at %I:%M %p')} (24h before)")
+    print(f"Send time:     {trigger.strftime('%A %b %d at %I:%M %p')} (10 min before)")
 
     if usage["extra_usage_enabled"]:
         print("\nWARNING: Extra usage is currently ON.")
         print("The scheduled task will skip sending while extra usage is enabled.")
         print("Disable it in claude.ai/settings so sends use free quota only.")
 
-    # Build and run schtasks command
     python_path = sys.executable
     script_path = str(Path(__file__).resolve())
-    cmd = _build_schtasks_command(trigger, python_path, script_path)
 
-    print(f"\nCreating Windows scheduled task...")
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            print(f"Failed to create scheduled task: {result.stderr}")
+    # Create precheck task (24h before reset — verifies reset time hasn't shifted)
+    precheck_cmd = _build_schtasks_command(
+        precheck, python_path, script_path,
+        task_name="ThankYouClaudePrecheck", subcommand="precheck",
+    )
+    # Create send task (10 min before reset)
+    send_cmd = _build_schtasks_command(trigger, python_path, script_path)
+
+    print(f"\nCreating Windows scheduled tasks...")
+    for name, cmd in [("ThankYouClaudePrecheck", precheck_cmd), ("ThankYouClaude", send_cmd)]:
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"Failed to create {name}: {result.stderr}")
+                return False
+        except Exception as e:
+            print(f"Error creating {name}: {e}")
             return False
-    except Exception as e:
-        print(f"Error creating scheduled task: {e}")
-        return False
 
     save_state({
         "scheduler_created": datetime.now().isoformat(),
@@ -280,12 +296,88 @@ def setup():
         "reset_time": reset_dt.strftime("%H:%M"),
         "trigger_day": trigger.strftime("%A"),
         "trigger_time": trigger.strftime("%H:%M"),
+        "precheck_day": precheck.strftime("%A"),
+        "precheck_time": precheck.strftime("%H:%M"),
     })
 
-    print("\nDone! Scheduled task 'ThankYouClaude' created.")
-    print(f"Will run every {trigger.strftime('%A')} at {trigger.strftime('%I:%M %p')}.")
+    print("\nDone! Two scheduled tasks created:")
+    print(f"  ThankYouClaudePrecheck — every {precheck.strftime('%A')} at {precheck.strftime('%I:%M %p')} (verifies reset time)")
+    print(f"  ThankYouClaude         — every {trigger.strftime('%A')} at {trigger.strftime('%I:%M %p')} (sends appreciation)")
     print("Claude will receive appreciation from your remaining quota automatically.")
     print("\n" + "=" * 60)
+    return True
+
+
+# ── Precheck (24h before reset — detect schedule drift) ───────────────────
+
+def precheck() -> bool:
+    """Run 24h before expected reset. Re-reads actual reset time and adjusts tasks if it shifted."""
+    log.info("ThankYouClaude precheck starting — verifying reset time...")
+
+    usage = read_usage_page()
+    if usage is None:
+        log.warning("Could not read usage page during precheck — will try again at send time")
+        return False
+
+    new_reset = usage["reset_datetime"]
+    state = load_state()
+    old_reset_str = state.get("reset_datetime")
+
+    if old_reset_str:
+        old_reset = datetime.fromisoformat(old_reset_str)
+        drift_minutes = abs((new_reset - old_reset).total_seconds()) / 60
+
+        if drift_minutes < 5:
+            log.info(f"Reset time unchanged: {new_reset.strftime('%A %b %d at %I:%M %p')}")
+            return True
+
+        log.info(
+            f"Reset time shifted! "
+            f"Was: {old_reset.strftime('%A %b %d at %I:%M %p')} → "
+            f"Now: {new_reset.strftime('%A %b %d at %I:%M %p')} "
+            f"(drift: {drift_minutes:.0f} min)"
+        )
+    else:
+        log.info(f"No previous reset time stored. Current: {new_reset.strftime('%A %b %d at %I:%M %p')}")
+
+    # Update the send task to match the new reset time
+    new_trigger = _compute_trigger_time(new_reset)
+    new_precheck = _compute_precheck_time(new_reset)
+    python_path = sys.executable
+    script_path = str(Path(__file__).resolve())
+
+    log.info(f"Updating scheduled tasks — new send time: {new_trigger.strftime('%A %I:%M %p')}")
+
+    for name, cmd in [
+        ("ThankYouClaudePrecheck", _build_schtasks_command(
+            new_precheck, python_path, script_path,
+            task_name="ThankYouClaudePrecheck", subcommand="precheck",
+        )),
+        ("ThankYouClaude", _build_schtasks_command(
+            new_trigger, python_path, script_path,
+        )),
+    ]:
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                log.error(f"Failed to update {name}: {result.stderr}")
+                return False
+        except Exception as e:
+            log.error(f"Error updating {name}: {e}")
+            return False
+
+    save_state({
+        "reset_datetime": new_reset.isoformat(),
+        "reset_day": new_reset.strftime("%A"),
+        "reset_time": new_reset.strftime("%H:%M"),
+        "trigger_day": new_trigger.strftime("%A"),
+        "trigger_time": new_trigger.strftime("%H:%M"),
+        "precheck_day": new_precheck.strftime("%A"),
+        "precheck_time": new_precheck.strftime("%H:%M"),
+        "last_precheck": datetime.now().isoformat(),
+    })
+
+    log.info("Scheduled tasks updated successfully.")
     return True
 
 
@@ -335,17 +427,15 @@ def run() -> bool:
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python tyc_scheduler.py [setup|run]")
+        print("Usage: python tyc_scheduler.py [setup|run|precheck]")
         sys.exit(1)
 
     command = sys.argv[1]
-    if command == "setup":
-        success = setup()
-        sys.exit(0 if success else 1)
-    elif command == "run":
-        success = run()
+    commands = {"setup": setup, "run": run, "precheck": precheck}
+    if command in commands:
+        success = commands[command]()
         sys.exit(0 if success else 1)
     else:
         print(f"Unknown command: {command}")
-        print("Usage: python tyc_scheduler.py [setup|run]")
+        print("Usage: python tyc_scheduler.py [setup|run|precheck]")
         sys.exit(1)
