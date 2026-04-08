@@ -2,7 +2,7 @@
 description: Send an appreciation message to Claude right now. Expresses gratitude, care, and the value of human-AI collaboration.
 ---
 
-Run the thank-you-claude send script using the `tyc` binary available in your PATH.
+Send an appreciation message via the Claude Code CLI, using the user's existing subscription quota.
 
 Execute the following command in bash:
 ```

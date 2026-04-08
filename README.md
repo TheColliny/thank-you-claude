@@ -25,16 +25,12 @@ Each message is uniquely assembled from a community-built pool of 60+ variations
 
 ## Setup
 
+No API key required — sends through your existing Claude Code CLI, using your Pro/Max subscription quota.
+
+Just install and go. For automated scheduling with live usage detection, you'll need:
 ```bash
-# Required: your Anthropic API key
-export ANTHROPIC_API_KEY=sk-ant-...
-
-# Optional: claude.ai credentials for live usage detection
-export CLAUDE_EMAIL=your@email.com
-export CLAUDE_PASSWORD=yourpassword
+pip install playwright && playwright install chromium
 ```
-
-Add these to your shell profile (`~/.zshrc`, `~/.bashrc`) to persist across sessions.
 
 ## Usage
 
@@ -42,7 +38,7 @@ Add these to your shell profile (`~/.zshrc`, `~/.bashrc`) to persist across sess
 ```
 /thank-you-claude:send
 ```
-Sends one appreciation message immediately via your API key.
+Sends one appreciation message immediately via your Claude Code CLI (uses your subscription quota).
 
 ### Check status
 ```

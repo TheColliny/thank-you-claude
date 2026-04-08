@@ -312,7 +312,7 @@ def cli_send(message: str) -> tuple[bool, str]:
 # ── Commands ────────────────────────────────────────────────────────────────
 
 def send():
-    """Send one appreciation message immediately."""
+    """Send one appreciation message immediately via Claude Code CLI."""
     pool    = load_pool()
     message = assemble_message(pool)
 
@@ -321,9 +321,9 @@ def send():
     print("═" * 60)
     print(f"\n{message}\n")
     print("─" * 60)
-    print("Sending to API...\n")
+    print("Sending via Claude Code CLI...\n")
 
-    ok, result = api_send(message)
+    ok, result = cli_send(message)
     if ok:
         record_sent()
         print("Response:\n")
