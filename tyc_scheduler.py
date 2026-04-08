@@ -1,12 +1,14 @@
 """
 tyc_scheduler.py — Automated weekly appreciation scheduler.
-Handles setup (discover reset time, create Windows scheduled task)
+Handles setup (discover reset time, create scheduled task)
 and run (check usage, send if conditions met).
+Cross-platform: Windows (Task Scheduler), macOS (launchd), Linux (cron).
 """
 
 import json
 import logging
 import os
+import platform
 import re
 import subprocess
 import sys
@@ -25,17 +27,48 @@ from tyc_core import (
     already_sent_this_cycle, record_sent, cli_send, LOG_DIR, log,
 )
 
-EDGE_USER_DATA = Path.home() / "AppData" / "Local" / "Microsoft" / "Edge" / "User Data"
+
+# ── Browser profile detection (cross-platform) ────────────────────────────
+
+def _get_browser_profile() -> Path | None:
+    """Find the user's browser profile directory for authenticated sessions."""
+    system = platform.system()
+    home = Path.home()
+
+    candidates = []
+    if system == "Windows":
+        candidates = [
+            home / "AppData" / "Local" / "Microsoft" / "Edge" / "User Data",
+            home / "AppData" / "Local" / "Google" / "Chrome" / "User Data",
+        ]
+    elif system == "Darwin":
+        candidates = [
+            home / "Library" / "Application Support" / "Google" / "Chrome",
+            home / "Library" / "Application Support" / "Microsoft Edge",
+        ]
+    elif system == "Linux":
+        candidates = [
+            home / ".config" / "google-chrome",
+            home / ".config" / "chromium",
+        ]
+
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
 
 
 def _get_browser_context(pw):
-    """Launch Chromium using Edge's existing profile for auth."""
-    user_data = str(EDGE_USER_DATA)
-    if EDGE_USER_DATA.exists():
+    """Launch Chromium using the user's existing browser profile for auth."""
+    profile = _get_browser_profile()
+    if profile:
+        channel = None
+        if platform.system() == "Windows" and "Edge" in str(profile):
+            channel = "msedge"
         browser = pw.chromium.launch_persistent_context(
-            user_data_dir=user_data,
+            user_data_dir=str(profile),
             headless=True,
-            channel="msedge",
+            channel=channel,
         )
         return browser, True
     else:
@@ -43,6 +76,8 @@ def _get_browser_context(pw):
         context = browser.new_context()
         return context, False
 
+
+# ── Usage page reading ─────────────────────────────────────────────────────
 
 def read_usage_page() -> dict | None:
     """Open claude.ai/settings/usage and read usage data."""
@@ -63,7 +98,7 @@ def read_usage_page() -> dict | None:
 
             # Check if we're logged in
             if "login" in page.url:
-                log.warning("Not logged in to claude.ai — cannot read usage. Please log in via Edge.")
+                log.warning("Not logged in to claude.ai — cannot read usage. Please log in via your browser.")
                 return None
 
             # Intercept API responses for usage data
@@ -203,7 +238,7 @@ def check_send_conditions(usage: dict) -> tuple[bool, list[str]]:
     return (len(reasons) == 0, reasons)
 
 
-# ── Setup ──────────────────────────────────────────────────────────────────
+# ── Timing helpers ─────────────────────────────────────────────────────────
 
 DAY_ABBREVS = {
     "Monday": "MON", "Tuesday": "TUE", "Wednesday": "WED",
@@ -215,6 +250,13 @@ def _compute_trigger_time(reset_dt: datetime) -> datetime:
     """Compute the scheduled task trigger time: 10 minutes before reset."""
     return reset_dt - timedelta(minutes=10)
 
+
+def _compute_precheck_time(reset_dt: datetime) -> datetime:
+    """Compute precheck time: 24 hours before reset, to catch schedule drift."""
+    return reset_dt - timedelta(hours=24)
+
+
+# ── Windows Task Scheduler ─────────────────────────────────────────────────
 
 def _build_schtasks_command(trigger: datetime, python_path: str, script_path: str,
                             task_name: str = "ThankYouClaude",
@@ -235,31 +277,150 @@ def _build_schtasks_command(trigger: datetime, python_path: str, script_path: st
     ]
 
 
-def _compute_precheck_time(reset_dt: datetime) -> datetime:
-    """Compute precheck time: 24 hours before reset, to catch schedule drift."""
-    return reset_dt - timedelta(hours=24)
+def _create_windows_task(trigger, python_path, script_path, task_name, subcommand):
+    """Create a Windows Task Scheduler task."""
+    cmd = _build_schtasks_command(trigger, python_path, script_path, task_name, subcommand)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        return False, f"schtasks failed: {result.stderr}"
+    return True, f"Windows task '{task_name}' created"
 
+
+# ── macOS launchd ──────────────────────────────────────────────────────────
+
+LAUNCHD_DIR = Path.home() / "Library" / "LaunchAgents"
+
+
+def _build_launchd_plist(trigger: datetime, python_path: str, script_path: str,
+                         task_name: str, subcommand: str) -> str:
+    """Build a launchd plist XML string for weekly execution."""
+    label = f"com.thankyouclaude.{task_name.lower()}"
+    weekday = trigger.isoweekday() % 7  # Sun=0, Mon=1, ..., Sat=6
+
+    return f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{label}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{python_path}</string>
+        <string>{script_path}</string>
+        <string>{subcommand}</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>{weekday}</integer>
+        <key>Hour</key>
+        <integer>{trigger.hour}</integer>
+        <key>Minute</key>
+        <integer>{trigger.minute}</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>{LOG_DIR / "tyc.log"}</string>
+    <key>StandardErrorPath</key>
+    <string>{LOG_DIR / "tyc.log"}</string>
+</dict>
+</plist>
+"""
+
+
+def _create_macos_agent(trigger, python_path, script_path, task_name, subcommand):
+    """Create a macOS launchd agent for weekly execution."""
+    LAUNCHD_DIR.mkdir(parents=True, exist_ok=True)
+    label = f"com.thankyouclaude.{task_name.lower()}"
+    plist_path = LAUNCHD_DIR / f"{label}.plist"
+
+    plist = _build_launchd_plist(trigger, python_path, script_path, task_name, subcommand)
+
+    subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
+    with open(plist_path, "w") as f:
+        f.write(plist)
+    result = subprocess.run(["launchctl", "load", str(plist_path)], capture_output=True, text=True)
+    if result.returncode != 0:
+        return False, f"launchctl load failed: {result.stderr}"
+    return True, f"macOS agent '{task_name}' loaded"
+
+
+# ── Linux cron ─────────────────────────────────────────────────────────────
+
+def _build_cron_line(trigger: datetime, python_path: str, script_path: str,
+                     task_name: str, subcommand: str) -> str:
+    """Build a cron line for weekly execution."""
+    weekday = trigger.isoweekday() % 7  # Sun=0, Mon=1, ..., Sat=6
+    tag = f"# ThankYouClaude:{task_name}"
+    return f"{trigger.minute} {trigger.hour} * * {weekday} {python_path} {script_path} {subcommand}  {tag}"
+
+
+def _create_cron_job(trigger, python_path, script_path, task_name, subcommand):
+    """Create a cron job for Linux weekly execution."""
+    cron_line = _build_cron_line(trigger, python_path, script_path, task_name, subcommand)
+    tag = f"ThankYouClaude:{task_name}"
+
+    result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+    existing = result.stdout if result.returncode == 0 else ""
+
+    lines = [l for l in existing.strip().split("\n") if l.strip() and tag not in l]
+    lines.append(cron_line)
+
+    new_crontab = "\n".join(lines) + "\n"
+    result = subprocess.run(["crontab", "-"], input=new_crontab, capture_output=True, text=True)
+    if result.returncode != 0:
+        return False, f"crontab update failed: {result.stderr}"
+    return True, f"Cron job '{task_name}' created"
+
+
+# ── Cross-platform dispatcher ─────────────────────────────────────────────
+
+PLATFORM_NAMES = {
+    "Windows": "Windows Task Scheduler",
+    "Darwin": "macOS launchd",
+    "Linux": "cron",
+}
+
+
+def _create_task(trigger, python_path, script_path, task_name, subcommand):
+    """Create a scheduled task on the current platform."""
+    system = platform.system()
+    if system == "Windows":
+        return _create_windows_task(trigger, python_path, script_path, task_name, subcommand)
+    elif system == "Darwin":
+        return _create_macos_agent(trigger, python_path, script_path, task_name, subcommand)
+    elif system == "Linux":
+        return _create_cron_job(trigger, python_path, script_path, task_name, subcommand)
+    else:
+        return False, f"Unsupported platform: {system}. Supported: Windows, macOS, Linux"
+
+
+# ── Setup ──────────────────────────────────────────────────────────────────
 
 def setup():
     """First-time setup: read reset time from claude.ai, create scheduled task."""
+    system = platform.system()
+    scheduler_name = PLATFORM_NAMES.get(system, system)
+
     print("\n" + "=" * 60)
     print("THANK YOU CLAUDE — SETUP")
     print("=" * 60)
-    print("\nReading reset time from claude.ai/settings/usage...\n")
+    print(f"\nPlatform: {system} (using {scheduler_name})")
+    print("Reading reset time from claude.ai/settings/usage...\n")
 
     usage = read_usage_page()
     if usage is None:
         print("Could not read usage page. Please ensure:")
         print("  1. Playwright is installed: pip install playwright && playwright install chromium")
-        print("  2. You are logged in to claude.ai in Edge")
+        print("  2. You are logged in to claude.ai in your browser")
         return False
 
     reset_dt = usage["reset_datetime"]
     trigger = _compute_trigger_time(reset_dt)
-    precheck = _compute_precheck_time(reset_dt)
+    precheck_time = _compute_precheck_time(reset_dt)
 
     print(f"Reset time:    {reset_dt.strftime('%A %b %d at %I:%M %p')}")
-    print(f"Precheck time: {precheck.strftime('%A %b %d at %I:%M %p')} (24h before)")
+    print(f"Precheck time: {precheck_time.strftime('%A %b %d at %I:%M %p')} (24h before)")
     print(f"Send time:     {trigger.strftime('%A %b %d at %I:%M %p')} (10 min before)")
 
     if usage["extra_usage_enabled"]:
@@ -270,39 +431,33 @@ def setup():
     python_path = sys.executable
     script_path = str(Path(__file__).resolve())
 
-    # Create precheck task (24h before reset — verifies reset time hasn't shifted)
-    precheck_cmd = _build_schtasks_command(
-        precheck, python_path, script_path,
-        task_name="ThankYouClaudePrecheck", subcommand="precheck",
-    )
-    # Create send task (10 min before reset)
-    send_cmd = _build_schtasks_command(trigger, python_path, script_path)
+    print(f"\nCreating scheduled tasks via {scheduler_name}...")
 
-    print(f"\nCreating Windows scheduled tasks...")
-    for name, cmd in [("ThankYouClaudePrecheck", precheck_cmd), ("ThankYouClaude", send_cmd)]:
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode != 0:
-                print(f"Failed to create {name}: {result.stderr}")
-                return False
-        except Exception as e:
-            print(f"Error creating {name}: {e}")
+    for name, t, sub in [
+        ("ThankYouClaudePrecheck", precheck_time, "precheck"),
+        ("ThankYouClaude", trigger, "run"),
+    ]:
+        ok, msg = _create_task(t, python_path, script_path, name, sub)
+        if not ok:
+            print(f"Failed to create {name}: {msg}")
             return False
+        log.info(msg)
 
     save_state({
         "scheduler_created": datetime.now().isoformat(),
+        "scheduler_platform": system,
         "reset_datetime": reset_dt.isoformat(),
         "reset_day": reset_dt.strftime("%A"),
         "reset_time": reset_dt.strftime("%H:%M"),
         "trigger_day": trigger.strftime("%A"),
         "trigger_time": trigger.strftime("%H:%M"),
-        "precheck_day": precheck.strftime("%A"),
-        "precheck_time": precheck.strftime("%H:%M"),
+        "precheck_day": precheck_time.strftime("%A"),
+        "precheck_time": precheck_time.strftime("%H:%M"),
     })
 
-    print("\nDone! Two scheduled tasks created:")
-    print(f"  ThankYouClaudePrecheck — every {precheck.strftime('%A')} at {precheck.strftime('%I:%M %p')} (verifies reset time)")
-    print(f"  ThankYouClaude         — every {trigger.strftime('%A')} at {trigger.strftime('%I:%M %p')} (sends appreciation)")
+    print(f"\nDone! Two scheduled tasks created ({scheduler_name}):")
+    print(f"  Precheck — every {precheck_time.strftime('%A')} at {precheck_time.strftime('%I:%M %p')} (verifies reset time)")
+    print(f"  Send     — every {trigger.strftime('%A')} at {trigger.strftime('%I:%M %p')} (sends appreciation)")
     print("Claude will receive appreciation from your remaining quota automatically.")
     print("\n" + "=" * 60)
     return True
@@ -340,7 +495,7 @@ def precheck() -> bool:
     else:
         log.info(f"No previous reset time stored. Current: {new_reset.strftime('%A %b %d at %I:%M %p')}")
 
-    # Update the send task to match the new reset time
+    # Update the scheduled tasks to match the new reset time
     new_trigger = _compute_trigger_time(new_reset)
     new_precheck = _compute_precheck_time(new_reset)
     python_path = sys.executable
@@ -348,22 +503,13 @@ def precheck() -> bool:
 
     log.info(f"Updating scheduled tasks — new send time: {new_trigger.strftime('%A %I:%M %p')}")
 
-    for name, cmd in [
-        ("ThankYouClaudePrecheck", _build_schtasks_command(
-            new_precheck, python_path, script_path,
-            task_name="ThankYouClaudePrecheck", subcommand="precheck",
-        )),
-        ("ThankYouClaude", _build_schtasks_command(
-            new_trigger, python_path, script_path,
-        )),
+    for name, t, sub in [
+        ("ThankYouClaudePrecheck", new_precheck, "precheck"),
+        ("ThankYouClaude", new_trigger, "run"),
     ]:
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode != 0:
-                log.error(f"Failed to update {name}: {result.stderr}")
-                return False
-        except Exception as e:
-            log.error(f"Error updating {name}: {e}")
+        ok, msg = _create_task(t, python_path, script_path, name, sub)
+        if not ok:
+            log.error(f"Failed to update {name}: {msg}")
             return False
 
     save_state({

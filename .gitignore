@@ -5,3 +5,7 @@ __pycache__/
 dist/
 state.json
 .pytest_cache/
+
+# Claude Code local settings (user-specific)
+.claude/
+CLAUDE.md

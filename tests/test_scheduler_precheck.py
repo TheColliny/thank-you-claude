@@ -40,11 +40,11 @@ def test_precheck_no_drift_skips_update():
 
         with patch("tyc_scheduler.read_usage_page", return_value=usage), \
              patch.object(tyc_core, "STATE_FILE", state_file), \
-             patch("subprocess.run") as mock_run:
+             patch("tyc_scheduler._create_task") as mock_create:
             result = precheck()
             assert result is True
-            # Should NOT call schtasks since no drift
-            mock_run.assert_not_called()
+            # Should NOT create tasks since no drift
+            mock_create.assert_not_called()
 
 
 def test_precheck_detects_drift_and_updates_tasks():
@@ -67,12 +67,12 @@ def test_precheck_detects_drift_and_updates_tasks():
 
         with patch("tyc_scheduler.read_usage_page", return_value=usage), \
              patch.object(tyc_core, "STATE_FILE", state_file), \
-             patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
+             patch("tyc_scheduler._create_task") as mock_create:
+            mock_create.return_value = (True, "task created")
             result = precheck()
             assert result is True
-            # Should call schtasks twice (precheck + send task)
-            assert mock_run.call_count == 2
+            # Should create two tasks (precheck + send)
+            assert mock_create.call_count == 2
 
 
 def test_precheck_handles_usage_page_failure():

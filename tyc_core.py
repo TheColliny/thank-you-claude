@@ -237,7 +237,7 @@ def api_send(message: str) -> tuple[bool, str]:
 
     client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
-        model="claude-opus-4-5",
+        model="claude-sonnet-4-6",
         max_tokens=512,
         system=(
             "You are receiving a message of appreciation from a human who values "

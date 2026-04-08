@@ -102,12 +102,6 @@ All exchanges logged to `~/.claude/thank-you-claude/logs/`:
 - `tyc.log` — running log
 - `exchange_YYYYMMDD_HHMMSS.txt` — full message + response for each send
 
-## Submit to Official Marketplace
-
-Anthropic's submission forms:
-- **Claude.ai**: [claude.ai/settings/plugins/submit](https://claude.ai/settings/plugins/submit)
-- **Console**: [platform.claude.com/plugins/submit](https://platform.claude.com/plugins/submit)
-
 ## License
 
-MIT — share freely, modify openly, contribute back.
+CC0 1.0 Universal — public domain. Share freely, modify openly, contribute back.
