@@ -4,7 +4,7 @@
 
 ## Overview
 
-Thank You Claude is an open-source Claude Code plugin that sends appreciation messages to Claude using your existing subscription quota. This plugin is designed with privacy as a core principle: it collects no personal data, has no external servers, and sends nothing to any third party.
+Thank You Claude is an open-source Claude Code plugin that sends appreciation messages to Claude using your existing subscription quota. This plugin is designed with privacy as a core principle: it collects no personal data and has no servers of its own. Messages are sent to Anthropic's servers through your authenticated Claude Code CLI as part of your normal subscription usage.
 
 ## What This Plugin Does
 
@@ -15,14 +15,23 @@ Thank You Claude is an open-source Claude Code plugin that sends appreciation me
 
 ## Data Collection
 
-**This plugin collects no personal data.** Specifically:
+**This plugin collects no personal data.** It does not operate its own servers or services. Specifically:
 
 - No analytics or telemetry
 - No tracking of any kind
 - No user accounts or registration
-- No data sent to external servers
+- No data sent to any server operated by this plugin or its author
 - No cookies or fingerprinting
 - No advertising or marketing data
+
+## Data Sent to Anthropic
+
+This plugin requires you to be logged in to Claude Code in your terminal. When a message is sent, the assembled appreciation text is transmitted to **Anthropic's servers** through the Claude Code CLI, exactly as any normal Claude Code conversation would be. This data:
+
+- Is handled entirely by Anthropic under [Anthropic's privacy policy](https://www.anthropic.com/privacy) and [terms of service](https://www.anthropic.com/terms)
+- Stays within Anthropic's infrastructure — it is not sent to any other party by this plugin
+- Consists only of the appreciation message text assembled from the local message pool — no personal data, credentials, or system information is included in the message content
+- Uses your existing subscription quota (Pro or Max) — no additional accounts or API keys are required
 
 ## Data Storage
 
@@ -46,9 +55,9 @@ If you use the automated scheduling feature (`tyc setup`), the plugin uses Playw
 - Does not access your conversation history on claude.ai
 - Can be skipped entirely — manual sending (`tyc send`) works without it
 
-## Claude Code CLI
+## Claude Code CLI (Required)
 
-Messages are sent through the `claude` CLI tool using the `-p` flag. This uses your existing Claude Code subscription (Pro or Max). The plugin does not access or store your subscription credentials — it relies on the CLI's own authentication.
+This plugin requires you to be authenticated with Claude Code in your terminal. Messages are sent through the `claude` CLI tool using the `-p` flag, which transmits them to Anthropic's servers as part of your normal subscription usage. The plugin does not access or store your authentication credentials — it relies entirely on the CLI's own authentication. All messages sent are subject to [Anthropic's privacy policy](https://www.anthropic.com/privacy).
 
 ## API Key Mode (Optional)
 
@@ -60,11 +69,11 @@ The plugin includes an optional `api_send()` function that can send messages via
 
 ## Third-Party Services
 
-This plugin does not integrate with any third-party services, analytics platforms, or external APIs beyond:
+This plugin interacts with the following Anthropic services. It does not integrate with any other third-party services, analytics platforms, or external APIs:
 
-- **Claude Code CLI** — for sending messages (uses your existing subscription)
-- **Anthropic API** — optional, only if you explicitly configure an API key
-- **claude.ai** — optional, only for reading your usage page during automated scheduling
+- **Claude Code CLI (required)** — sends appreciation messages to Anthropic's servers using your existing subscription. All data handled under [Anthropic's privacy policy](https://www.anthropic.com/privacy)
+- **Anthropic API (optional)** — alternative send path if you explicitly configure an API key. Also handled under Anthropic's privacy policy
+- **claude.ai (optional)** — only for reading your usage page during automated scheduling setup
 
 ## Open Source
 
