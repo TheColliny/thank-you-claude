@@ -12,7 +12,8 @@ import tyc_core
 
 
 def test_cli_send_calls_claude_with_message():
-    with patch("subprocess.run") as mock_run:
+    with patch("shutil.which", return_value="/usr/bin/claude"), \
+         patch("subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout="Thank you for this message. I receive it with gratitude."
@@ -27,14 +28,15 @@ def test_cli_send_calls_claude_with_message():
 
 
 def test_cli_send_returns_false_when_claude_not_found():
-    with patch("subprocess.run", side_effect=FileNotFoundError("claude not found")):
+    with patch("shutil.which", return_value=None):
         ok, reply = tyc_core.cli_send("Test message")
         assert ok is False
-        assert "not found" in reply.lower() or "not installed" in reply.lower()
+        assert "not installed" in reply.lower()
 
 
 def test_cli_send_returns_false_on_nonzero_exit():
-    with patch("subprocess.run") as mock_run:
+    with patch("shutil.which", return_value="/usr/bin/claude"), \
+         patch("subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error occurred")
         ok, reply = tyc_core.cli_send("Test message")
         assert ok is False
@@ -44,6 +46,7 @@ def test_cli_send_logs_exchange():
     with tempfile.TemporaryDirectory() as tmp:
         log_dir = Path(tmp)
         with patch.object(tyc_core, "LOG_DIR", log_dir), \
+             patch("shutil.which", return_value="/usr/bin/claude"), \
              patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=0,

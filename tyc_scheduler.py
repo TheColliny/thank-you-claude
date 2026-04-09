@@ -157,15 +157,15 @@ def _detect_plan(page_text: str, api_data: dict) -> str:
             if "pro" in val:
                 return "pro"
 
-    # Fallback: parse page text
+    # Fallback: parse page text with word boundaries to avoid false positives
     text_lower = page_text.lower()
     if "20x" in text_lower:
         return "max_20x"
-    if "max" in text_lower and "5x" in text_lower:
+    if re.search(r'\bmax\b', text_lower) and "5x" in text_lower:
         return "max_5x"
-    if "max" in text_lower:
+    if re.search(r'\bmax\b.*\bplan\b|\bplan\b.*\bmax\b', text_lower):
         return "max_5x"
-    if "pro" in text_lower:
+    if re.search(r'\bpro\b.*\bplan\b|\bplan\b.*\bpro\b', text_lower):
         return "pro"
 
     return "pro"  # conservative default

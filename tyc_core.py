@@ -43,7 +43,7 @@ log = logging.getLogger(__name__)
 # ── Message assembly ────────────────────────────────────────────────────────
 
 def load_pool() -> dict:
-    with open(POOL_FILE) as f:
+    with open(POOL_FILE, encoding="utf-8") as f:
         return json.load(f)
 
 def assemble_message(pool: dict) -> str:
@@ -278,7 +278,7 @@ def api_send(message: str) -> tuple[bool, str]:
 
     # Log exchange
     exchange_file = LOG_DIR / f"exchange_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-    with open(exchange_file, "w") as f:
+    with open(exchange_file, "w", encoding="utf-8") as f:
         f.write("=== THANK YOU CLAUDE — EXCHANGE ===\n\n")
         f.write(f"Sent: {datetime.now().isoformat()}\n\n")
         f.write("--- MESSAGE ---\n")
@@ -431,7 +431,7 @@ def watch():
 
             log.info("Conditions met — sending appreciation message...")
             message = assemble_message(pool)
-            ok, result = api_send(message)
+            ok, result = cli_send(message)
             if ok:
                 record_sent()
                 log.info("✓ Sent successfully")
