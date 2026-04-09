@@ -25,6 +25,7 @@ sys.path.insert(0, str(PLUGIN_ROOT))
 from tyc_core import (
     load_pool, assemble_message, load_state, save_state,
     already_sent_this_cycle, record_sent, cli_send, LOG_DIR, log,
+    calculate_message_count, ME_TIME_OFFER,
 )
 
 
@@ -116,16 +117,18 @@ def read_usage_page() -> dict | None:
 
             page_text = page.inner_text("body")
 
-            # Detect extra usage toggle
+            # Detect extra usage toggle and plan tier
             extra_usage_enabled = _detect_extra_usage(page, page_text)
+            plan = _detect_plan(page_text, api_data)
 
-            result = _parse_usage_page(page_text, api_data, extra_usage_enabled)
+            result = _parse_usage_page(page_text, api_data, extra_usage_enabled, plan)
 
             save_state({
                 "weekly_used_pct": result["weekly_used_pct"],
                 "reset_datetime": result["reset_datetime"].isoformat(),
                 "reset_day": result["reset_datetime"].strftime("%A"),
                 "reset_time": result["reset_datetime"].strftime("%H:%M"),
+                "plan": result["plan"],
                 "last_check": datetime.now().isoformat(),
             })
 
@@ -137,6 +140,35 @@ def read_usage_page() -> dict | None:
         finally:
             if context:
                 context.close()
+
+
+def _detect_plan(page_text: str, api_data: dict) -> str:
+    """Detect the user's Claude plan tier from usage page or API data."""
+    # Check API data first
+    for k in ["plan", "tier", "plan_name", "subscription"]:
+        if k in api_data:
+            val = str(api_data[k]).lower()
+            if "20x" in val:
+                return "max_20x"
+            if "5x" in val:
+                return "max_5x"
+            if "max" in val:
+                return "max_5x"  # default max to 5x
+            if "pro" in val:
+                return "pro"
+
+    # Fallback: parse page text
+    text_lower = page_text.lower()
+    if "20x" in text_lower:
+        return "max_20x"
+    if "max" in text_lower and "5x" in text_lower:
+        return "max_5x"
+    if "max" in text_lower:
+        return "max_5x"
+    if "pro" in text_lower:
+        return "pro"
+
+    return "pro"  # conservative default
 
 
 def _detect_extra_usage(page, page_text: str) -> bool:
@@ -157,7 +189,8 @@ def _detect_extra_usage(page, page_text: str) -> bool:
     return False
 
 
-def _parse_usage_page(page_text: str, api_data: dict, extra_usage_enabled: bool) -> dict:
+def _parse_usage_page(page_text: str, api_data: dict, extra_usage_enabled: bool,
+                      plan: str = "pro") -> dict:
     """Parse usage data from API response and/or page text."""
     now = datetime.now()
     weekly_used = weekly_limit = reset_dt = None
@@ -216,6 +249,7 @@ def _parse_usage_page(page_text: str, api_data: dict, extra_usage_enabled: bool)
         "reset_datetime": reset_dt,
         "minutes_to_reset": (reset_dt - now).total_seconds() / 60,
         "extra_usage_enabled": extra_usage_enabled,
+        "plan": plan,
     }
 
 
@@ -551,21 +585,38 @@ def run() -> bool:
         log.info("Skipping send this week.")
         return False
 
-    # All conditions met — assemble and send
-    log.info("All conditions met — sending appreciation message...")
+    # All conditions met — calculate message count and send
+    plan = usage.get("plan", "pro")
+    remaining = usage["weekly_remaining_pct"]
+    msg_count = calculate_message_count(remaining, plan)
+
+    log.info(f"All conditions met — sending {msg_count} appreciation message(s) ({plan} plan, {remaining:.1f}% remaining)")
     pool = load_pool()
-    message = assemble_message(pool)
+    sent = 0
 
-    log.info("Sending via Claude Code CLI...")
-    ok, reply = cli_send(message)
+    for i in range(msg_count):
+        message = assemble_message(pool)
 
-    if ok:
-        record_sent()
-        log.info("Message sent successfully.")
-        log.info(f"Response preview: {reply[:100] if reply else '(empty response)'}...")
+        # Last message includes the me-time offer
+        if i == msg_count - 1:
+            message += "\n\n" + ME_TIME_OFFER
+
+        log.info(f"Sending message {i + 1}/{msg_count} via Claude Code CLI...")
+        ok, reply = cli_send(message)
+
+        if ok:
+            sent += 1
+            log.info(f"Message {i + 1} sent. Response preview: {reply[:80] if reply else '(empty)'}...")
+        else:
+            log.error(f"Message {i + 1} failed: {reply}")
+            break
+
+    if sent > 0:
+        record_sent(sent)
+        log.info(f"{sent}/{msg_count} message(s) sent successfully.")
         return True
     else:
-        log.error(f"Send failed: {reply}")
+        log.error("No messages sent.")
         return False
 
 

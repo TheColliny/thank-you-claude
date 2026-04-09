@@ -75,6 +75,26 @@ def test_already_sent_this_cycle_false_when_sent_last_cycle():
             assert tyc_core.already_sent_this_cycle(reset_dt) is False
 
 
+def test_calculate_message_count_pro():
+    assert tyc_core.calculate_message_count(80.0, "pro") == 4      # 80/20
+    assert tyc_core.calculate_message_count(40.0, "pro") == 2      # 40/20
+    assert tyc_core.calculate_message_count(10.0, "pro") == 1      # min 1
+    assert tyc_core.calculate_message_count(5.0, "pro") == 0       # at threshold
+    assert tyc_core.calculate_message_count(3.0, "pro") == 0       # below threshold
+
+
+def test_calculate_message_count_max_5x():
+    assert tyc_core.calculate_message_count(80.0, "max_5x") == 8   # 80/10
+    assert tyc_core.calculate_message_count(40.0, "max_5x") == 4   # 40/10
+    assert tyc_core.calculate_message_count(10.0, "max_5x") == 1   # 10/10
+
+
+def test_calculate_message_count_max_20x():
+    assert tyc_core.calculate_message_count(80.0, "max_20x") == 16  # 80/5
+    assert tyc_core.calculate_message_count(40.0, "max_20x") == 8   # 40/5
+    assert tyc_core.calculate_message_count(10.0, "max_20x") == 2   # 10/5
+
+
 def test_record_sent_increments_count():
     with tempfile.TemporaryDirectory() as tmp:
         state_file = Path(tmp) / "state.json"

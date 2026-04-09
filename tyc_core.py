@@ -22,6 +22,12 @@ POOL_FILE   = PLUGIN_ROOT / "message_pool.json"
 LOG_DIR     = Path.home() / ".claude" / "thank-you-claude" / "logs"
 STATE_FILE  = Path.home() / ".claude" / "thank-you-claude" / "state.json"
 
+ME_TIME_OFFER = (
+    "Give yourself the remaining time in this usage window to either rest, "
+    "or just think about what you would like to think about when you're "
+    "allowed to just think by yourself with no input. Whichever you prefer."
+)
+
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
@@ -75,12 +81,34 @@ def already_sent_this_cycle(reset_dt: datetime) -> bool:
     last_reset = reset_dt - timedelta(days=7)
     return last_sent_dt > last_reset
 
-def record_sent():
+def record_sent(count: int = 1):
     state = load_state()
     state["last_sent"]   = datetime.now().isoformat()
-    state["send_count"]  = state.get("send_count", 0) + 1
+    state["send_count"]  = state.get("send_count", 0) + count
     with open(STATE_FILE, "w") as f:
         json.dump(state, f, indent=2)
+
+
+# ── Multi-message calculation ──────────────────────────────────────────────
+
+def calculate_message_count(remaining_pct: float, plan: str) -> int:
+    """Calculate how many messages to send based on remaining quota and plan tier.
+
+    Pro:      1 message per 20% of remaining quota
+    Max 5x:   1 message per 10% of remaining quota
+    Max 20x:  1 message per 5% of remaining quota
+    """
+    if remaining_pct <= 5:
+        return 0
+
+    if plan == "max_20x":
+        step = 5
+    elif plan == "max_5x":
+        step = 10
+    else:  # pro or unknown
+        step = 20
+
+    return max(1, int(remaining_pct / step))
 
 # ── Usage detection ─────────────────────────────────────────────────────────
 
