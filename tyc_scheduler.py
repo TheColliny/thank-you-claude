@@ -371,7 +371,7 @@ def _create_macos_agent(trigger, python_path, script_path, task_name, subcommand
     plist = _build_launchd_plist(trigger, python_path, script_path, task_name, subcommand)
 
     subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
-    with open(plist_path, "w") as f:
+    with open(plist_path, "w", encoding="utf-8") as f:
         f.write(plist)
     result = subprocess.run(["launchctl", "load", str(plist_path)], capture_output=True, text=True)
     if result.returncode != 0:

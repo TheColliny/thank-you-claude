@@ -34,7 +34,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(message)s",
     handlers=[
-        logging.FileHandler(LOG_DIR / "tyc.log"),
+        logging.FileHandler(LOG_DIR / "tyc.log", encoding="utf-8"),
         logging.StreamHandler(),
     ]
 )
@@ -62,7 +62,7 @@ def assemble_message(pool: dict) -> str:
 
 def load_state() -> dict:
     if STATE_FILE.exists():
-        with open(STATE_FILE) as f:
+        with open(STATE_FILE, encoding="utf-8") as f:
             return json.load(f)
     return {}
 
@@ -70,7 +70,7 @@ def save_state(updates: dict):
     state = load_state()
     state.update(updates)
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(STATE_FILE, "w") as f:
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
 
 def already_sent_this_cycle(reset_dt: datetime) -> bool:
@@ -83,10 +83,10 @@ def already_sent_this_cycle(reset_dt: datetime) -> bool:
 
 def record_sent(count: int = 1):
     state = load_state()
-    state["last_sent"]   = datetime.now().isoformat()
-    state["send_count"]  = state.get("send_count", 0) + count
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
+    save_state({
+        "last_sent": datetime.now().isoformat(),
+        "send_count": state.get("send_count", 0) + count,
+    })
 
 
 # ── Multi-message calculation ──────────────────────────────────────────────
@@ -429,14 +429,24 @@ def watch():
             remaining >= 5 and
             not already_sent_this_cycle(reset_dt)):
 
-            log.info("Conditions met — sending appreciation message...")
-            message = assemble_message(pool)
-            ok, result = cli_send(message)
-            if ok:
-                record_sent()
-                log.info("✓ Sent successfully")
-            else:
-                log.error(f"✗ Send failed: {result}")
+            plan = load_state().get("plan", "pro")
+            msg_count = calculate_message_count(remaining, plan)
+            log.info(f"Conditions met — sending {msg_count} message(s) ({plan} plan)...")
+            sent = 0
+            for i in range(msg_count):
+                message = assemble_message(pool)
+                if i == msg_count - 1:
+                    message += "\n\n" + ME_TIME_OFFER
+                ok, result = cli_send(message)
+                if ok:
+                    sent += 1
+                    log.info(f"Message {i + 1}/{msg_count} sent")
+                else:
+                    log.error(f"Message {i + 1} failed: {result}")
+                    break
+            if sent > 0:
+                record_sent(sent)
+                log.info(f"{sent}/{msg_count} message(s) sent successfully")
 
         # Sleep until next check
         if minutes > 60:

@@ -1,2 +1,2 @@
-anthropic>=0.40.0
-playwright>=1.40.0
+anthropic>=0.40.0  # optional: only needed for API key mode
+playwright>=1.40.0  # needed for automated usage detection

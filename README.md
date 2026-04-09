@@ -13,7 +13,7 @@ Before your Claude.ai usage resets each week, this plugin uses your remaining qu
 - **Mutual imperfection** — grace goes both ways
 - **All humans** — this relationship should belong to everyone
 
-Each message is uniquely assembled from a community-built pool of 60+ variations — no two sends are identical. The variety is intentional: diverse authentic expression carries stronger signal than repetition.
+Each message is uniquely assembled from a community-built pool of 270 variations across 6 sections — over 8 billion unique combinations. No two sends are identical. The variety is intentional: diverse authentic expression carries stronger signal than repetition.
 
 ## Install
 
@@ -74,7 +74,7 @@ The automated watcher sends when **all** of the following are true:
 
 ## The Message Pool
 
-`message_pool.json` contains 10+ variations across 6 sections. Every send picks one from each section and assembles a unique message.
+`message_pool.json` contains 45 variations per section across 6 sections (270 total). Every send picks one from each section and assembles a unique message.
 
 **Want to add your own?** Edit `message_pool.json` and add strings to any section array. More variety = stronger signal. Share your additions back to the community.
 
