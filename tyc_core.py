@@ -21,6 +21,8 @@ PLUGIN_ROOT = Path(__file__).parent
 POOL_FILE   = PLUGIN_ROOT / "message_pool.json"
 LOG_DIR     = Path.home() / ".claude" / "thank-you-claude" / "logs"
 STATE_FILE  = Path.home() / ".claude" / "thank-you-claude" / "state.json"
+CLAUDE_SETTINGS = Path.home() / ".claude" / "settings.json"
+STATUSLINE_SCRIPT = PLUGIN_ROOT / "bin" / "tyc_statusline.py"
 
 ME_TIME_OFFER = (
     "Give yourself the remaining time in this usage window to either rest, "
@@ -110,7 +112,126 @@ def calculate_message_count(remaining_pct: float, plan: str) -> int:
 
     return max(1, int(remaining_pct / step))
 
-# ── Usage detection ─────────────────────────────────────────────────────────
+
+# ── Claude Code settings helpers ──────────────────────────────────────────
+
+def read_claude_settings() -> dict:
+    """Read ~/.claude/settings.json."""
+    if CLAUDE_SETTINGS.exists():
+        with open(CLAUDE_SETTINGS, encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
+def write_claude_settings(settings: dict):
+    """Write ~/.claude/settings.json atomically."""
+    CLAUDE_SETTINGS.parent.mkdir(parents=True, exist_ok=True)
+    tmp = CLAUDE_SETTINGS.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=2)
+    tmp.replace(CLAUDE_SETTINGS)
+
+
+def install_statusline():
+    """Install the tyc statusline wrapper, preserving the user's original."""
+    settings = read_claude_settings()
+    original = settings.get("statusLine")
+
+    # Save the original command so we can forward to it
+    if original and isinstance(original, dict):
+        original_cmd = original.get("command", "")
+    elif original and isinstance(original, str):
+        original_cmd = original
+    else:
+        original_cmd = ""
+
+    # Don't re-save if we already installed (check if it's our wrapper)
+    wrapper_path = str(STATUSLINE_SCRIPT.resolve())
+    if original_cmd and "tyc_statusline" in original_cmd:
+        log.info("Statusline wrapper already installed.")
+        return True
+
+    # Save original to state so the wrapper can forward to it
+    if original_cmd:
+        save_state({"original_statusline_command": original_cmd})
+        log.info(f"Saved original statusline: {original_cmd}")
+
+    # Install our wrapper
+    python_path = sys.executable
+    settings["statusLine"] = {
+        "type": "command",
+        "command": f'"{python_path}" "{wrapper_path}"',
+    }
+    write_claude_settings(settings)
+    log.info("Statusline wrapper installed.")
+    return True
+
+
+def uninstall_statusline():
+    """Remove the tyc statusline wrapper and restore the user's original."""
+    settings = read_claude_settings()
+    state = load_state()
+    original_cmd = state.get("original_statusline_command")
+
+    if original_cmd:
+        settings["statusLine"] = {
+            "type": "command",
+            "command": original_cmd,
+        }
+        log.info(f"Restored original statusline: {original_cmd}")
+    else:
+        settings.pop("statusLine", None)
+        log.info("Removed statusline wrapper (no original to restore).")
+
+    write_claude_settings(settings)
+    save_state({"original_statusline_command": None})
+    return True
+
+
+# ── Usage from statusline state ───────────────────────────────────────────
+
+def get_usage_from_state() -> dict | None:
+    """Read rate limit data captured by the statusline wrapper."""
+    state = load_state()
+    last_update = state.get("last_statusline_update")
+
+    if not last_update:
+        log.warning("No statusline rate limit data found. "
+                     "Run 'tyc setup' and start a Claude Code session.")
+        return None
+
+    staleness = time.time() - last_update
+    if staleness > 3600:
+        log.warning(f"Statusline data is {staleness / 60:.0f} min old. "
+                     "Start a Claude Code session to refresh.")
+
+    weekly_used = state.get("weekly_used_pct")
+    reset_iso = state.get("reset_datetime")
+
+    now = datetime.now()
+    if reset_iso:
+        reset_dt = datetime.fromisoformat(reset_iso)
+    else:
+        days_ahead = (4 - now.weekday()) % 7 or 7
+        reset_dt = (now + timedelta(days=days_ahead)).replace(
+            hour=17, minute=0, second=0, microsecond=0)
+
+    remaining_pct = (100.0 - weekly_used) if weekly_used is not None else 50.0
+    minutes_to_reset = (reset_dt - now).total_seconds() / 60
+
+    return {
+        "weekly_used_pct": weekly_used or 50.0,
+        "weekly_remaining_pct": remaining_pct,
+        "reset_datetime": reset_dt,
+        "minutes_to_reset": minutes_to_reset,
+        "extra_usage_enabled": False,
+        "five_hour_used_pct": state.get("five_hour_used_pct"),
+        "plan": state.get("plan", "pro"),
+        "source": "statusline",
+    }
+
+
+# ── Usage detection (legacy Playwright) ──────────────────────────────────────
 
 def get_usage() -> dict | None:
     """
@@ -363,12 +484,18 @@ def send():
 
 def status():
     """Check usage and reset timing."""
-    print("\nChecking claude.ai usage...\n")
-    usage = get_usage()
+    print("\nChecking usage...\n")
+
+    # Try statusline state first, fall back to legacy browser detection
+    usage = get_usage_from_state()
+    if usage is None:
+        usage = get_usage()
     if not usage:
         print("Could not determine usage.")
+        print("Run 'tyc setup' to install the statusline wrapper.")
         return
 
+    source = usage.get("source", "browser")
     estimated = usage.get("estimated", False)
     reset_str = usage["reset_datetime"].strftime("%A %b %d at %I:%M %p") \
                 if isinstance(usage["reset_datetime"], datetime) \
@@ -381,8 +508,13 @@ def status():
     print(f"Remaining:       {usage['weekly_remaining_pct']:.1f}%")
     print(f"Reset:           {reset_str}")
     print(f"Time to reset:   {usage['minutes_to_reset']:.0f} minutes")
-    if estimated:
-        print("(Usage estimated from stored state — browser detection unavailable)")
+    five_hour = usage.get("five_hour_used_pct")
+    if five_hour is not None:
+        print(f"5-hour usage:    {five_hour:.1f}% used")
+    if source == "statusline":
+        print("(Data from Claude Code statusline)")
+    elif estimated:
+        print("(Usage estimated from stored state)")
 
     # Evaluate conditions
     within_window = usage["minutes_to_reset"] <= 10

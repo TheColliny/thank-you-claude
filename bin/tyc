@@ -8,7 +8,8 @@ Commands:
   tyc status     Check usage and reset timing
   tyc watch      Run the automated weekly watcher (long-running)
   tyc preview    Preview a randomly assembled message without sending
-  tyc setup      First-time setup: discover reset time, create scheduled tasks
+  tyc setup      First-time setup: install statusline wrapper, create scheduled tasks
+  tyc uninstall  Remove statusline wrapper and restore original settings
   tyc precheck   Check if reset time shifted and update tasks (runs 24h before reset)
   tyc run        Execute weekly check+send (called by scheduled task)
 """
@@ -21,14 +22,15 @@ PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PLUGIN_ROOT)
 
 from tyc_core import send, status, watch, preview
-from tyc_scheduler import setup, run, precheck
+from tyc_scheduler import setup, run, precheck, uninstall
 
 COMMANDS = {
-    "send":    send,
-    "status":  status,
-    "watch":   watch,
-    "preview": preview,
+    "send":     send,
+    "status":   status,
+    "watch":    watch,
+    "preview":  preview,
     "setup":    setup,
+    "uninstall": uninstall,
     "precheck": precheck,
     "run":      run,
 }

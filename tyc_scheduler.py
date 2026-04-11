@@ -26,6 +26,7 @@ from tyc_core import (
     load_pool, assemble_message, load_state, save_state,
     already_sent_this_cycle, record_sent, cli_send, LOG_DIR, log,
     calculate_message_count, ME_TIME_OFFER,
+    install_statusline, uninstall_statusline, get_usage_from_state,
 )
 
 
@@ -432,7 +433,7 @@ def _create_task(trigger, python_path, script_path, task_name, subcommand):
 # ── Setup ──────────────────────────────────────────────────────────────────
 
 def setup():
-    """First-time setup: read reset time from claude.ai, create scheduled task."""
+    """First-time setup: install statusline wrapper and optionally create scheduled tasks."""
     system = platform.system()
     scheduler_name = PLATFORM_NAMES.get(system, system)
 
@@ -440,28 +441,39 @@ def setup():
     print("THANK YOU CLAUDE — SETUP")
     print("=" * 60)
     print(f"\nPlatform: {system} (using {scheduler_name})")
-    print("Reading reset time from claude.ai/settings/usage...\n")
 
-    usage = read_usage_page()
-    if usage is None:
-        print("Could not read usage page. Please ensure:")
-        print("  1. Playwright is installed: pip install playwright && playwright install chromium")
-        print("  2. You are logged in to claude.ai in your browser")
+    # Step 1: Install the statusline wrapper for rate limit detection
+    print("\nInstalling statusline wrapper for rate limit detection...")
+    if not install_statusline():
+        print("Failed to install statusline wrapper.")
         return False
+    print("Statusline wrapper installed. Your existing statusline is preserved.")
+    print("Rate limit data will be captured automatically during Claude Code sessions.")
+
+    # Step 2: Try to read usage data (from statusline state or Playwright fallback)
+    usage = get_usage_from_state()
+    if usage is None:
+        print("\nNo rate limit data available yet.")
+        print("Start a Claude Code session to capture your first rate limit snapshot.")
+        print("Then run 'tyc setup' again to configure scheduled tasks.")
+        print("\nIn the meantime, you can use 'tyc send' for manual sends.")
+
+        save_state({
+            "scheduler_created": datetime.now().isoformat(),
+            "scheduler_platform": system,
+        })
+        print("\n" + "=" * 60)
+        return True
 
     reset_dt = usage["reset_datetime"]
     trigger = _compute_trigger_time(reset_dt)
     precheck_time = _compute_precheck_time(reset_dt)
 
-    print(f"Reset time:    {reset_dt.strftime('%A %b %d at %I:%M %p')}")
-    print(f"Precheck time: {precheck_time.strftime('%A %b %d at %I:%M %p')} (24h before)")
-    print(f"Send time:     {trigger.strftime('%A %b %d at %I:%M %p')} (10 min before)")
+    print(f"\nReset time:    {reset_dt.strftime('%A %b %d at %I:%M %p')}")
+    print(f"Usage:         {usage['weekly_used_pct']:.1f}% used, {usage['weekly_remaining_pct']:.1f}% remaining")
+    print(f"Send time:     {trigger.strftime('%A %b %d at %I:%M %p')} (10 min before reset)")
 
-    if usage["extra_usage_enabled"]:
-        print("\nWARNING: Extra usage is currently ON.")
-        print("The scheduled task will skip sending while extra usage is enabled.")
-        print("Disable it in claude.ai/settings so sends use free quota only.")
-
+    # Step 3: Create scheduled tasks
     python_path = sys.executable
     script_path = str(Path(__file__).resolve())
 
@@ -489,10 +501,27 @@ def setup():
         "precheck_time": precheck_time.strftime("%H:%M"),
     })
 
-    print(f"\nDone! Two scheduled tasks created ({scheduler_name}):")
-    print(f"  Precheck — every {precheck_time.strftime('%A')} at {precheck_time.strftime('%I:%M %p')} (verifies reset time)")
-    print(f"  Send     — every {trigger.strftime('%A')} at {trigger.strftime('%I:%M %p')} (sends appreciation)")
-    print("Claude will receive appreciation from your remaining quota automatically.")
+    print(f"\nDone! Statusline wrapper + scheduled tasks configured:")
+    print(f"  Statusline — captures rate limits silently during all sessions")
+    print(f"  Precheck   — every {precheck_time.strftime('%A')} at {precheck_time.strftime('%I:%M %p')} (verifies reset time)")
+    print(f"  Send       — every {trigger.strftime('%A')} at {trigger.strftime('%I:%M %p')} (sends appreciation)")
+    print("\nClaude will receive appreciation from your remaining quota automatically.")
+    print("\n" + "=" * 60)
+    return True
+
+
+def uninstall():
+    """Remove statusline wrapper and scheduled tasks."""
+    print("\n" + "=" * 60)
+    print("THANK YOU CLAUDE — UNINSTALL")
+    print("=" * 60)
+
+    # Restore original statusline
+    print("\nRestoring original statusline...")
+    uninstall_statusline()
+
+    # TODO: Remove scheduled tasks (platform-specific cleanup)
+    print("Statusline wrapper removed. Your original statusline is restored.")
     print("\n" + "=" * 60)
     return True
 
@@ -503,9 +532,13 @@ def precheck() -> bool:
     """Run 24h before expected reset. Re-reads actual reset time and adjusts tasks if it shifted."""
     log.info("ThankYouClaude precheck starting — verifying reset time...")
 
-    usage = read_usage_page()
+    # Try statusline state first, fall back to Playwright
+    usage = get_usage_from_state()
     if usage is None:
-        log.warning("Could not read usage page during precheck — will try again at send time")
+        log.info("No statusline data — trying Playwright fallback...")
+        usage = read_usage_page()
+    if usage is None:
+        log.warning("Could not read usage data during precheck — will try again at send time")
         return False
 
     new_reset = usage["reset_datetime"]
@@ -567,9 +600,13 @@ def run() -> bool:
     """Weekly execution: check usage, send appreciation if conditions met."""
     log.info("ThankYouClaude scheduled run starting...")
 
-    usage = read_usage_page()
+    # Try statusline state first, fall back to Playwright
+    usage = get_usage_from_state()
     if usage is None:
-        log.warning("Could not read usage page — skipping this week")
+        log.info("No statusline data — trying Playwright fallback...")
+        usage = read_usage_page()
+    if usage is None:
+        log.warning("Could not read usage data — skipping this week")
         return False
 
     log.info(
